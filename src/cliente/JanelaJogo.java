@@ -1,10 +1,12 @@
 package cliente;
 
 import comum.IServidorJogo;
+import comum.EstadoJogo;
 import comum.JogadaInvalidaException;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JToggleButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -38,7 +40,10 @@ public class JanelaJogo extends JFrame {
     private final JPanel painelTabuleiro = new JPanel();
     private JButton[][] botoes;
     private int meuId = -1;
-    private boolean[][] viradas;
+    private EstadoJogo estado;
+    private final JToggleButton btnRevanche = new JToggleButton("Jogar de novo");
+    private final JLabel lblRevanche = new JLabel(" ");
+    private final JLabel lblPlacar = new JLabel(" ");
 
     public JanelaJogo(IServidorJogo servidor, Runnable aoFechar) {
         super("Jogo da Memória — RMI");
@@ -60,46 +65,70 @@ public class JanelaJogo extends JFrame {
         raiz.add(painelTabuleiro, BorderLayout.CENTER);
 
         lblMensagem.setFont(lblMensagem.getFont().deriveFont(14f));
-        raiz.add(lblMensagem, BorderLayout.SOUTH);
+        JPanel rodape = new JPanel(new BorderLayout(6, 6));
+        JPanel revanche = new JPanel(new BorderLayout(6, 6));
+        revanche.add(btnRevanche, BorderLayout.WEST);
+        revanche.add(lblRevanche, BorderLayout.CENTER);
+        rodape.add(lblMensagem, BorderLayout.NORTH);
+        rodape.add(revanche, BorderLayout.SOUTH);
+        raiz.add(rodape, BorderLayout.SOUTH);
+        btnRevanche.setEnabled(false);
+        btnRevanche.addActionListener(e -> solicitarRevanche(btnRevanche.isSelected()));
 
-        // TODO: placar (acertos/erros) e indicador de quem tem a vez
+        raiz.add(lblPlacar, BorderLayout.NORTH);
     }
 
     public void definirJogador(int id, String nome) {
         this.meuId = id;
+        atualizarBotoes();
         setTitle("Jogo da Memória — " + nome + " (Jogador " + (id + 1) + ")");
     }
 
-    // Callback: alguém (eu ou o adversário) revelou uma carta
-    public void mostrarCarta(int linha, int coluna, int valor, String jogador) {
-        if (botoes == null) return;
-        viradas[linha][coluna] = true;
-        botoes[linha][coluna].setIcon(Imagens.carta(valor, TAMANHO_CARTA));
-        lblMensagem.setText(jogador + " revelou a carta (" + (linha + 1) + "," + (coluna + 1) + ")");
+    // O cliente apenas apresenta o estado decidido pelo servidor.
+    public void atualizarEstado(EstadoJogo novo) {
+        if (estado != null && novo.versao <= estado.versao) return;
+        estado = novo;
+        if (botoes == null) construirTabuleiro(novo.cartas.length, novo.cartas[0].length);
+        for (int l = 0; l < botoes.length; l++)
+            for (int c = 0; c < botoes[l].length; c++) {
+                javax.swing.ImageIcon imagem = novo.cartas[l][c] < 0 ? Imagens.verso(TAMANHO_CARTA)
+                        : Imagens.carta(novo.cartas[l][c], TAMANHO_CARTA);
+                botoes[l][c].setIcon(imagem);
+                botoes[l][c].setDisabledIcon(imagem);
+            }
+        lblMensagem.setText(novo.mensagem);
+        lblPlacar.setText(placar(0) + "    |    " + placar(1));
+        atualizarBotoes();
     }
 
-    // Callback: alguém escondeu uma carta
-    public void esconderCarta(int linha, int coluna, String jogador) {
-        if (botoes == null) return;
-        viradas[linha][coluna] = false;
-        botoes[linha][coluna].setIcon(Imagens.verso(TAMANHO_CARTA));
-        lblMensagem.setText(jogador + " escondeu a carta (" + (linha + 1) + "," + (coluna + 1) + ")");
+    private String placar(int id) {
+        String nome = estado.nomes[id] == null ? "Aguardando jogador" : estado.nomes[id];
+        return nome + ": " + estado.acertos[id] + " pares / " + estado.erros[id] + " erros";
     }
 
-    // Recebe os avisos do servidor (callback)
-    public void mostrarMensagem(String mensagem) {
-        lblMensagem.setText(mensagem);
+    private void atualizarBotoes() {
+        if (estado == null || botoes == null) return;
+        boolean jogadorValido = meuId >= 0 && meuId < 2;
+        btnRevanche.setEnabled(jogadorValido && estado.encerrada);
+        btnRevanche.setSelected(jogadorValido && estado.revanche[meuId]);
+        btnRevanche.setText(btnRevanche.isSelected() ? "Cancelar revanche" : "Jogar de novo");
+        int confirmados = (estado.revanche[0] ? 1 : 0) + (estado.revanche[1] ? 1 : 0);
+        lblRevanche.setText(estado.encerrada ? "Revanche: " + confirmados + "/2 confirmados" : " ");
+        boolean minhaVez = estado.ativa && !estado.aguardandoOcultar && estado.vez == meuId;
+        for (int l = 0; l < botoes.length; l++)
+            for (int c = 0; c < botoes[l].length; c++)
+                botoes[l][c].setEnabled(minhaVez && estado.cartas[l][c] < 0);
     }
 
     public void construirTabuleiro(int linhas, int colunas) {
         painelTabuleiro.removeAll();
         painelTabuleiro.setLayout(new GridLayout(linhas, colunas, 6, 6));
         botoes = new JButton[linhas][colunas];
-        viradas = new boolean[linhas][colunas];
         for (int l = 0; l < linhas; l++) {
             for (int c = 0; c < colunas; c++) {
                 JButton b = new JButton(Imagens.verso(TAMANHO_CARTA));
                 b.setPreferredSize(new Dimension(TAMANHO_CARTA + 6, TAMANHO_CARTA + 6));
+                b.setEnabled(false);
                 b.setFocusPainted(false);
                 b.setContentAreaFilled(false);
                 b.setOpaque(true);
@@ -113,17 +142,26 @@ public class JanelaJogo extends JFrame {
         painelTabuleiro.revalidate();
     }
 
+    private void solicitarRevanche(boolean aceita) {
+        btnRevanche.setEnabled(false);
+        chamadasRmi.submit(() -> {
+            try {
+                servidor.definirRevanche(meuId, aceita);
+            } catch (JogadaInvalidaException | RemoteException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    lblMensagem.setText(ex.getMessage());
+                    atualizarBotoes();
+                });
+            }
+        });
+    }
+
     private void clicarCarta(int linha, int coluna) {
-        boolean virada = viradas[linha][coluna];
         // Só pede ao servidor (chamada RMI); a tela muda quando chega o callback,
         // assim os dois clientes atualizam juntos
         chamadasRmi.submit(() -> {
             try {
-                if (virada) {
-                    servidor.ocultarCarta(meuId, linha, coluna);
-                } else {
-                    servidor.revelarCarta(meuId, linha, coluna);
-                }
+                servidor.revelarCarta(meuId, linha, coluna);
             } catch (JogadaInvalidaException ex) {
                 SwingUtilities.invokeLater(() -> lblMensagem.setText(ex.getMessage()));
             } catch (RemoteException ex) {
@@ -132,6 +170,5 @@ public class JanelaJogo extends JFrame {
                         "Erro de comunicação", JOptionPane.ERROR_MESSAGE));
             }
         });
-        // TODO: comparar as duas cartas, acerto mantém a vez, erro esconde e passa a vez
     }
 }

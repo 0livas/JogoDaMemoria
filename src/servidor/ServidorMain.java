@@ -2,6 +2,9 @@ package servidor;
 
 import comum.IServidorJogo;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -28,7 +31,7 @@ public class ServidorMain {
         int linhas = args.length > 2 ? Integer.parseInt(args[2]) : 4;
         int colunas = args.length > 3 ? Integer.parseInt(args[3]) : 4;
 
-        if ((linhas * colunas) % 2 != 0 || linhas * colunas / 2 > MAX_PARES) {
+        if (linhas <= 0 || colunas <= 0 || ((long) linhas * colunas) % 2 != 0 || (long) linhas * colunas / 2 > MAX_PARES) {
             System.err.println("Tabuleiro inválido: use um número par de cartas e no máximo " + MAX_PARES + " pares (ex.: 4x4, 4x6, 6x6).");
             System.exit(1);
         }
@@ -49,11 +52,27 @@ public class ServidorMain {
         System.out.println(" IPv4 desta máquina : " + String.join(", ", listarIps()));
         System.out.println(" (Se o endereço anunciado não for o da rede usada, reinicie informando o IP:");
         System.out.println("  servidor.bat <ip> )");
-        System.out.println(" Ctrl+C para encerrar.");
+        System.out.println(" R + Enter para reiniciar a partida. Ctrl+C para encerrar.");
         System.out.println("==============================================");
         ServidorJogoImpl.log("Aguardando jogadores...");
 
-        Thread.currentThread().join(); // mantém o processo vivo
+        Thread comandos = new Thread(() -> lerComandos(servidor,
+                new BufferedReader(new InputStreamReader(System.in))), "comandos-servidor");
+        comandos.setDaemon(true);
+        comandos.start();
+        Thread.currentThread().join(); // mantém o processo vivo mesmo sem entrada padrão
+    }
+
+    static void lerComandos(ServidorJogoImpl servidor, BufferedReader entrada) {
+        try {
+            String comando;
+            while ((comando = entrada.readLine()) != null) {
+                if (comando.trim().equalsIgnoreCase("R")) servidor.reiniciar();
+                else if (!comando.isBlank()) ServidorJogoImpl.log("Comando desconhecido. Use R + Enter para reiniciar.");
+            }
+        } catch (IOException e) {
+            ServidorJogoImpl.log("Leitura do terminal encerrada: " + e.getMessage());
+        }
     }
 
     private static String detectarIp() throws Exception {

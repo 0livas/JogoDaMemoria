@@ -1,9 +1,9 @@
 package servidor;
 
+import comum.EstadoJogo;
 import comum.IClienteCallback;
 import comum.IServidorJogo;
 import comum.JogadaInvalidaException;
-
 import java.rmi.RemoteException;
 import java.rmi.server.ServerNotActiveException;
 import java.rmi.server.UnicastRemoteObject;
@@ -11,119 +11,110 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-//Implementação do objeto remoto (middleware)
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class ServidorJogoImpl extends UnicastRemoteObject implements IServidorJogo {
     private static final long serialVersionUID = 1L;
     private static final DateTimeFormatter HORA = DateTimeFormatter.ofPattern("HH:mm:ss");
     private final Partida partida;
     private final IClienteCallback[] clientes = new IClienteCallback[2];
-
-    // Envia os callbacks numa thread separada, na ordem em que os eventos aconteceram,
-    // para um cliente lento não travar o servidor
     private final ExecutorService notificador = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "notificador-callbacks");
         t.setDaemon(true);
         return t;
     });
-
-    // Ação que o servidor executa em cada cliente (um callback RMI)
-    private interface Callback {
-        void enviar(IClienteCallback cliente) throws RemoteException;
-    }
+    private final ScheduledExecutorService temporizador = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "ocultar-par");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ServidorJogoImpl(int porta, int linhas, int colunas) throws RemoteException {
         super(porta);
-        this.partida = new Partida(linhas, colunas);
+        partida = new Partida(linhas, colunas);
     }
 
     @Override
     public synchronized int entrar(String nome, IClienteCallback callback) throws JogadaInvalidaException {
-        log("RMI <- entrar(nome=\"" + nome + "\") de " + hostDoCliente());
-
-        if (nome == null || nome.isBlank()) {
-            throw new JogadaInvalidaException("Informe um nome.");
-        }
+        log("RMI <- entrar(" + nome + ") de " + hostDoCliente());
+        if (nome == null || nome.isBlank()) throw new JogadaInvalidaException("Informe um nome.");
+        if (callback == null) throw new JogadaInvalidaException("Callback obrigatório.");
         int id = partida.adicionarJogador(nome.trim());
-        if (id < 0) {
-            log("   partida cheia, entrada recusada");
-            throw new JogadaInvalidaException("A partida já tem dois jogadores.");
-        }
+        if (id < 0) throw new JogadaInvalidaException("A partida já tem dois jogadores.");
         clientes[id] = callback;
-        log("   " + partida.nome(id) + " é o jogador " + (id + 1));
-
-        if (partida.temDoisJogadores()) {
-            partida.sortear();
-            log("   PARTIDA INICIADA. Matriz sorteada:\n" + partida.matrizComoTexto());
-            String msg = "Partida iniciada: " + partida.nome(0) + " x " + partida.nome(1);
-            difundir("notificar", c -> c.notificar(msg));
-        } else {
-            difundir("notificar", c -> c.notificar("Aguardando adversário..."));
-        }
+        if (partida.temDoisJogadores()) log("PARTIDA INICIADA. Matriz sorteada:\n" + partida.matrizComoTexto());
+        difundir();
         return id;
     }
 
     @Override
-    public synchronized int[] obterTamanho() {
-        return new int[]{partida.getLinhas(), partida.getColunas()};
-    }
+    public synchronized EstadoJogo obterEstado() { return partida.estado(); }
 
     @Override
     public synchronized void revelarCarta(int jogadorId, int linha, int coluna) throws JogadaInvalidaException {
         log(String.format("RMI <- revelarCarta(jogador=%d, linha=%d, coluna=%d) de %s",
                 jogadorId, linha, coluna, hostDoCliente()));
-        int valor = partida.valor(linha, coluna);
-        String jogador = partida.nome(jogadorId);
-        // Atualização em tempo real: os DOIS clientes recebem a carta revelada
-        difundir("cartaRevelada", c -> c.cartaRevelada(linha, coluna, valor, jogador));
-        // TODO: validar a vez do jogador
+        partida.selecionar(jogadorId, linha, coluna);
+        EstadoJogo estado = partida.estado();
+        difundir();
+        if (estado.aguardandoOcultar) {
+            temporizador.schedule(() -> {
+                synchronized (ServidorJogoImpl.this) {
+                    if (partida.ocultarErro(estado.versao)) difundir();
+                }
+            }, 1500, TimeUnit.MILLISECONDS);
+        }
     }
 
     @Override
-    public synchronized void ocultarCarta(int jogadorId, int linha, int coluna) throws JogadaInvalidaException {
-        log(String.format("RMI <- ocultarCarta(jogador=%d, linha=%d, coluna=%d) de %s",
-                jogadorId, linha, coluna, hostDoCliente()));
-        partida.valor(linha, coluna); // só valida a posição
-        String jogador = partida.nome(jogadorId);
-        difundir("cartaOcultada", c -> c.cartaOcultada(linha, coluna, jogador));
+    public synchronized void definirRevanche(int jogadorId, boolean aceita) throws JogadaInvalidaException {
+        log("RMI <- definirRevanche(jogador=" + jogadorId + ", aceita=" + aceita + ") de " + hostDoCliente());
+        partida.definirRevanche(jogadorId, aceita);
+        if (partida.estado().ativa) log("REVANCHE. Matriz sorteada:\n" + partida.matrizComoTexto());
+        difundir();
+    }
+
+    // Disponível apenas no objeto local; não faz parte da interface RMI.
+    public synchronized void reiniciar() {
+        partida.reiniciar();
+        log("HARD-RESET. Matriz sorteada:\n" + partida.matrizComoTexto());
+        difundir();
     }
 
     @Override
     public synchronized void sair(int jogadorId) {
         log("RMI <- sair(jogador=" + jogadorId + ") de " + hostDoCliente());
         if (jogadorId < 0 || jogadorId > 1) return;
-        String nome = partida.nome(jogadorId);
         clientes[jogadorId] = null;
         partida.removerJogador(jogadorId);
-        difundir("notificar", c -> c.notificar(nome + " saiu da partida."));
+        difundir();
     }
 
-    // Executa o mesmo CALLBACK RMI em todos os clientes conectados
-    private void difundir(String metodo, Callback callback) {
+    // Captura uma cópia consistente e envia os eventos na ordem das jogadas.
+    private void difundir() {
+        EstadoJogo estado = partida.estado();
         IClienteCallback[] alvos = clientes.clone();
-        String[] nomes = {partida.nome(0), partida.nome(1)};
         notificador.submit(() -> {
             for (int id = 0; id < 2; id++) {
                 if (alvos[id] == null) continue;
                 try {
-                    callback.enviar(alvos[id]);
-                    log("RMI -> " + metodo + "() em " + nomes[id]);
+                    alvos[id].estadoAtualizado(estado);
+                    log("RMI -> estadoAtualizado(v=" + estado.versao + ") em " + estado.nomes[id]);
                 } catch (RemoteException e) {
-                    log("   falha no callback de " + nomes[id] + ": " + e.getMessage());
+                    log("Falha no callback de " + estado.nomes[id] + ": " + e.getMessage());
+                    synchronized (ServidorJogoImpl.this) {
+                        if (clientes[id] == alvos[id]) sair(id);
+                    }
                 }
             }
         });
     }
 
     private static String hostDoCliente() {
-        try {
-            return getClientHost(); // IP de quem fez a chamada RMI
-        } catch (ServerNotActiveException e) {
-            return "local";
-        }
+        try { return getClientHost(); }
+        catch (ServerNotActiveException e) { return "local"; }
     }
-
     static void log(String msg) {
         System.out.println("[" + LocalTime.now().format(HORA) + "] " + msg);
     }

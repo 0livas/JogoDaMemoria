@@ -1,6 +1,7 @@
 package cliente;
 
 import comum.IServidorJogo;
+import comum.EstadoJogo;
 import comum.JogadaInvalidaException;
 
 import javax.swing.JLabel;
@@ -100,10 +101,10 @@ public class ClienteMain {
         }
         idRef.set(id);
 
-        int[] tamanho = servidor.obterTamanho(); // chamada RMI
+        EstadoJogo estado = servidor.obterEstado(); // sincronização inicial
         SwingUtilities.invokeLater(() -> {
-            janela.construirTabuleiro(tamanho[0], tamanho[1]);
             janela.definirJogador(id, nome);
+            janela.atualizarEstado(estado);
             janela.pack();
             janela.setLocationByPlatform(true);
             janela.setVisible(true);
