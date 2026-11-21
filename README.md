@@ -39,8 +39,8 @@ A matriz é sorteada quando o segundo jogador entra.
 
 | Pacote / classe | Papel |
 |---|---|
-| `comum.IServidorJogo` | Interface remota do servidor: `entrar`, `obterTamanho`, `revelarCarta`, `sair`. |
-| `comum.IClienteCallback` | Interface remota do cliente (callback): `notificar`, `ping`. |
+| `comum.IServidorJogo` | Interface remota do servidor: `entrar`, `obterTamanho`, `revelarCarta`, `ocultarCarta`, `sair`. |
+| `comum.IClienteCallback` | Interface remota do cliente (callback): `notificar`, `cartaRevelada`, `cartaOcultada`, `ping`. |
 | `comum.JogadaInvalidaException` | Exceção de regra, serializada do servidor para o cliente. |
 | `servidor.ServidorMain` | Define `java.rmi.server.hostname`, cria o registry e faz `rebind` do objeto. |
 | `servidor.ServidorJogoImpl` | Objeto remoto (`UnicastRemoteObject`). |
@@ -57,7 +57,7 @@ A matriz é sorteada quando o segundo jogador entra.
 - [x] Matriz de pares aleatórios gerada e guardada no servidor
 - [x] Cada par associado a uma imagem guardada no cliente
 - [x] Roda sem IDE (JARs + scripts)
-- [ ] Atualização em tempo real via callback RMI
+- [x] Atualização em tempo real via callback RMI
 - [ ] Só quem tem a vez pode selecionar cartas
 - [ ] Acerto mantém a vez / erro oculta o par e passa o turno
 - [ ] Estado oficial, acertos, erros e ordem das jogadas controlados pelo servidor

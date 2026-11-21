@@ -24,8 +24,11 @@ public interface IServidorJogo extends Remote {
     // Retorna {linhas, colunas} do tabuleiro
     int[] obterTamanho() throws RemoteException;
 
-    // Retorna o valor (número da imagem) da carta na posição
-    int revelarCarta(int linha, int coluna) throws RemoteException, JogadaInvalidaException;
+    // Revela a carta; o servidor avisa os dois clientes por callback (cartaRevelada)
+    void revelarCarta(int jogadorId, int linha, int coluna) throws RemoteException, JogadaInvalidaException;
+
+    // Esconde a carta; o servidor avisa os dois clientes por callback (cartaOcultada)
+    void ocultarCarta(int jogadorId, int linha, int coluna) throws RemoteException, JogadaInvalidaException;
 
     void sair(int jogadorId) throws RemoteException;
 

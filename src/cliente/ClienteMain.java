@@ -85,7 +85,7 @@ public class ClienteMain {
         JanelaJogo janela = ref.get();
 
         int portaCallback = Integer.getInteger("porta.callback", 0);
-        ClienteCallbackImpl callback = new ClienteCallbackImpl(portaCallback, janela::mostrarMensagem);
+        ClienteCallbackImpl callback = new ClienteCallbackImpl(portaCallback, janela);
         callbackRef.set(callback);
 
         // 3) Chamada remota: entra na partida enviando o stub do callback

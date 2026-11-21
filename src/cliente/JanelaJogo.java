@@ -37,6 +37,7 @@ public class JanelaJogo extends JFrame {
     private final JLabel lblMensagem = new JLabel("Conectando...");
     private final JPanel painelTabuleiro = new JPanel();
     private JButton[][] botoes;
+    private int meuId = -1;
     private boolean[][] viradas;
 
     public JanelaJogo(IServidorJogo servidor, Runnable aoFechar) {
@@ -65,7 +66,24 @@ public class JanelaJogo extends JFrame {
     }
 
     public void definirJogador(int id, String nome) {
+        this.meuId = id;
         setTitle("Jogo da Memória — " + nome + " (Jogador " + (id + 1) + ")");
+    }
+
+    // Callback: alguém (eu ou o adversário) revelou uma carta
+    public void mostrarCarta(int linha, int coluna, int valor, String jogador) {
+        if (botoes == null) return;
+        viradas[linha][coluna] = true;
+        botoes[linha][coluna].setIcon(Imagens.carta(valor, TAMANHO_CARTA));
+        lblMensagem.setText(jogador + " revelou a carta (" + (linha + 1) + "," + (coluna + 1) + ")");
+    }
+
+    // Callback: alguém escondeu uma carta
+    public void esconderCarta(int linha, int coluna, String jogador) {
+        if (botoes == null) return;
+        viradas[linha][coluna] = false;
+        botoes[linha][coluna].setIcon(Imagens.verso(TAMANHO_CARTA));
+        lblMensagem.setText(jogador + " escondeu a carta (" + (linha + 1) + "," + (coluna + 1) + ")");
     }
 
     // Recebe os avisos do servidor (callback)
@@ -96,20 +114,16 @@ public class JanelaJogo extends JFrame {
     }
 
     private void clicarCarta(int linha, int coluna) {
-        // Clicou numa carta já virada: esconde de novo (por enquanto só local)
-        if (viradas[linha][coluna]) {
-            viradas[linha][coluna] = false;
-            botoes[linha][coluna].setIcon(Imagens.verso(TAMANHO_CARTA));
-            return;
-        }
-        // Pede ao servidor o valor da carta (chamada RMI)
+        boolean virada = viradas[linha][coluna];
+        // Só pede ao servidor (chamada RMI); a tela muda quando chega o callback,
+        // assim os dois clientes atualizam juntos
         chamadasRmi.submit(() -> {
             try {
-                int valor = servidor.revelarCarta(linha, coluna);
-                SwingUtilities.invokeLater(() -> {
-                    viradas[linha][coluna] = true;
-                    botoes[linha][coluna].setIcon(Imagens.carta(valor, TAMANHO_CARTA));
-                });
+                if (virada) {
+                    servidor.ocultarCarta(meuId, linha, coluna);
+                } else {
+                    servidor.revelarCarta(meuId, linha, coluna);
+                }
             } catch (JogadaInvalidaException ex) {
                 SwingUtilities.invokeLater(() -> lblMensagem.setText(ex.getMessage()));
             } catch (RemoteException ex) {
@@ -118,7 +132,6 @@ public class JanelaJogo extends JFrame {
                         "Erro de comunicação", JOptionPane.ERROR_MESSAGE));
             }
         });
-        // TODO: mostrar a carta virada também no outro cliente (atualização em tempo real)
         // TODO: comparar as duas cartas, acerto mantém a vez, erro esconde e passa a vez
     }
 }
